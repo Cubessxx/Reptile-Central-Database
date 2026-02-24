@@ -17,7 +17,7 @@ from sqlalchemy import text
 # Page Setup
 def page_setup(title: str, icon: str, page_heading: str = None) -> None:
     """Configure a Streamlit page and render the reset database button."""
-    st.set_page_config(page_title=title, page_icon=icon)
+    st.set_page_config(page_title=title, page_icon=icon, layout="wide")
     render_reset_button(key="reset_db_button")
 
     if page_heading:
