@@ -8,6 +8,8 @@ from backend.db import get_engine
 def render_reset_button(key: str) -> None:
     engine = get_engine()
 
+
+#Hacky fix to make the button red.
     st.sidebar.markdown(
         """
 <style>
