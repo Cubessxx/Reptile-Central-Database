@@ -8,13 +8,6 @@
     # AI Source URL: https://chat.openai.com/
     
 
-
-
-
-
-
-
-
 # Powershell script that combines the four DML sql files (CREATE,READ,UPDATE,DELETE)
 
 

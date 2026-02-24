@@ -11,7 +11,7 @@ from frontend.ui.ui_framework import (
 )
 
 
-page_setup(title="Employee Assignments", icon=":link:", page_heading="Employee Assignments")
+page_setup(title="Employee Assignments", icon="🔗", page_heading="Employee Assignments")
 engine = get_engine()
 
 animals_df = pd.read_sql("SELECT * FROM v_browse_animals_page;", engine)
