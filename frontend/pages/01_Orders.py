@@ -1,9 +1,17 @@
+import time
+
 import pandas as pd
 import streamlit as st
 from sqlalchemy import text
 
 from backend.db import get_engine
-from frontend.ui.ui_framework import page_setup, render_browse_tab, render_delete_tab
+from frontend.ui.ui_framework import (
+    page_setup,
+    queue_success_message,
+    render_browse_tab,
+    render_delete_tab,
+    render_success_message,
+)
 
 
 ORDER_DETAILS_QUERY = text(
@@ -15,6 +23,11 @@ CREATE_ORDER_QUERY = text("CALL sp_generic_create(:create_id, :p1, :p2, :p3, :p4
 UPSERT_ORDER_DETAIL_QUERY = text(
     "CALL sp_generic_update(:update_id, :target_id, :p1, :p2, :p3, :p4);"
 )
+CREATE_ORDER_SUCCESS_KEY = "orders_create_success"
+UPDATE_ORDER_ITEM_SUCCESS_KEY = "orders_update_item_success"
+CREATE_ORDER_PRODUCTS_EDITOR_KEY_PREFIX = "create_order_products_editor"
+CREATE_ORDER_PRODUCTS_EDITOR_VERSION_KEY = "create_order_products_editor_version"
+ORDER_SUCCESS_MESSAGE_DURATION_SECONDS = 3
 
 
 def full_name(df: pd.DataFrame, first_col: str, last_col: str) -> pd.Series:
@@ -83,12 +96,14 @@ def render_create_order_tab(tab, engine, customers_df, employees_df, products_df
 
         customer_options = id_label_map(customers_df, "Customer ID", "Customer Name")
         employee_options = id_label_map(employees_df, "Employee ID", "Employee Name")
+        editor_version = int(st.session_state.get(CREATE_ORDER_PRODUCTS_EDITOR_VERSION_KEY, 0))
+        editor_key = f"{CREATE_ORDER_PRODUCTS_EDITOR_KEY_PREFIX}_{editor_version}"
 
         entry_df = products_df[["Product ID", "Product Name", "Price"]].copy()
         entry_df.rename(columns={"Price": "Unit Price"}, inplace=True)
         entry_df["Quantity"] = 0
 
-        with st.form("create_order_form", clear_on_submit=True):
+        with st.form("create_order_form"):
             customer_id = st.selectbox(
                 "Customer",
                 list(customer_options),
@@ -110,27 +125,37 @@ def render_create_order_tab(tab, engine, customers_df, employees_df, products_df
                 column_config={
                     "Quantity": st.column_config.NumberColumn("Quantity", min_value=0, step=1)
                 },
-                key="create_order_products_editor",
+                key=editor_key,
             )
             submitted = st.form_submit_button("Create Order")
 
         if submitted:
             items = edited_df.query("Quantity > 0")[["Product ID", "Quantity"]].astype(int)
             if items.empty:
-                st.write("No quantities entered. Nothing to create.")
+                message_placeholder = st.empty()
+                message_placeholder.error("A order must contain atleast one item.")
+                time.sleep(3)
+                message_placeholder.empty()
                 return
 
             with engine.begin() as conn:
                 new_order_id = create_order_header(conn, int(customer_id), int(employee_id))
                 for product_id, qty in items.itertuples(index=False, name=None):
                     upsert_order_item(conn, new_order_id, int(product_id), int(qty))
-            st.success(f"Created Order {new_order_id}")
+            st.session_state[CREATE_ORDER_PRODUCTS_EDITOR_VERSION_KEY] = editor_version + 1
+            queue_success_message(CREATE_ORDER_SUCCESS_KEY, "Order created successfully.")
             st.rerun()
+
+        render_success_message(CREATE_ORDER_SUCCESS_KEY, ORDER_SUCCESS_MESSAGE_DURATION_SECONDS)
 
 
 def render_details_tab(tab, engine, orders_df, products_df) -> None:
     """Show the order details tab for viewing and editing items."""
     with tab:
+        render_success_message(
+            UPDATE_ORDER_ITEM_SUCCESS_KEY,
+            ORDER_SUCCESS_MESSAGE_DURATION_SECONDS,
+        )
         if orders_df.empty:
             st.write("No orders found.")
             return
@@ -177,6 +202,7 @@ def render_details_tab(tab, engine, orders_df, products_df) -> None:
         if st.button("Update or Add Item"):
             with engine.begin() as conn:
                 upsert_order_item(conn, int(order_id), int(product_id), int(qty))
+            queue_success_message(UPDATE_ORDER_ITEM_SUCCESS_KEY, "Order item updated successfully.")
             st.rerun()
 
 
@@ -210,4 +236,5 @@ render_delete_tab(
     label_field_1="First Name",
     label_field_2="Last Name",
     label_field_3="Order Date",
+    success_duration_seconds=ORDER_SUCCESS_MESSAGE_DURATION_SECONDS,
 )

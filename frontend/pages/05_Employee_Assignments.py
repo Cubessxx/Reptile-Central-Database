@@ -18,7 +18,8 @@ animals_df = pd.read_sql("SELECT * FROM v_browse_animals_page;", engine)
 employees_df = pd.read_sql("SELECT * FROM v_browse_employees_page;", engine)
 
 animal_options = animals_df["Animal ID"].astype(int).tolist()
-employee_options = [None] + employees_df["Employee ID"].astype(int).tolist()
+employee_create_options = employees_df["Employee ID"].astype(int).tolist()
+employee_update_options = [None] + employee_create_options
 
 animal_lookup = {
     int(row["Animal ID"]): f'{int(row["Animal ID"])} - {row["Name"]} ({row["Species"]})'
@@ -53,7 +54,7 @@ ASSIGNMENT_CREATE_SPECS = [
     {
         "label": "Employee",
         "type": "select",
-        "options": employee_options,
+        "options": employee_create_options,
         "format_func": format_employee_option,
     },
 ]
@@ -71,7 +72,7 @@ ASSIGNMENT_UPDATE_SPECS = [
         "label": "Employee",
         "type": "select",
         "source": "Employee ID",
-        "options": employee_options,
+        "options": employee_update_options,
         "format_func": format_employee_option,
     },
 ]

@@ -7,11 +7,17 @@
 # AI Source URL: https://chat.openai.com/
 #
 
+import time
+
 import pandas as pd
 import streamlit as st
 from backend.db import get_engine
 from frontend.ui.reset_button import render_reset_button
 from sqlalchemy import text
+from sqlalchemy.exc import PendingRollbackError
+
+
+SUCCESS_MESSAGE_DURATION_SECONDS = 3
 
 
 # Page Setup
@@ -29,6 +35,26 @@ def normalize_text(val: str) -> str | None:
     """Take in a string and return NULL if it is the empty string(""). This is helpful so that a unaltered form submission box does not pass NOT NULL constraints"""
     val = val.strip()
     return val or None
+
+
+def collect_missing_required_fields(specs: list[dict], values: dict[str, object]) -> list[str]:
+    """Return field labels that are required but missing."""
+    missing: list[str] = []
+    for idx, spec in enumerate(specs):
+        # Keep this simple: text fields are required by default, others are opt-in.
+        required = spec.get("required", spec.get("type") == "text")
+        if not required:
+            continue
+
+        value = values.get(f"p{idx + 1}")
+        if value is None or (isinstance(value, str) and not value.strip()):
+            missing.append(spec["label"])
+    return missing
+
+
+def form_field_key(form_key: str, param: str, version: int) -> str:
+    """Build a stable, versioned widget key for form fields."""
+    return f"{form_key}_{param}_{version}"
 
 
 def build_display_labels(df: pd.DataFrame, label_fields: list[str]) -> pd.Series:
@@ -70,13 +96,39 @@ def render_missing_select_options(label: str, spec: dict) -> None:
     st.write(spec.get("empty_options_message", f"No options available for {label}."))
 
 
+def read_sql_with_recovery(engine, query: str, params: dict | None = None) -> pd.DataFrame:
+    """Run a read query and recover once from stale pooled transaction state."""
+    try:
+        with engine.connect() as conn:
+            return pd.read_sql(query, conn, params=params)
+    except PendingRollbackError:
+        engine.dispose()
+        with engine.connect() as conn:
+            return pd.read_sql(query, conn, params=params)
+
+
+def queue_success_message(key: str, message: str) -> None:
+    """Store a success message so it can be shown after st.rerun()."""
+    st.session_state[key] = message
+
+
+def render_success_message(key: str, duration_seconds: int = SUCCESS_MESSAGE_DURATION_SECONDS) -> None:
+    """Render and clear a queued success message after a fixed duration."""
+    message = st.session_state.pop(key, None)
+    if message:
+        placeholder = st.empty()
+        placeholder.success(message)
+        time.sleep(duration_seconds)
+        placeholder.empty()
+
+
 # Tab Renderers
 def render_browse_tab(tab, name: str, view: str) -> None:
     """Render a browse tab from a database view."""
     with tab:
         st.subheader(name)
         engine = get_engine()
-        df = pd.read_sql(f"SELECT * FROM {view};", engine)
+        df = read_sql_with_recovery(engine, f"SELECT * FROM {view};")
         st.dataframe(df, width="stretch", hide_index=True)
 
 
@@ -88,15 +140,19 @@ def render_delete_tab(
     label_field_1: str,
     label_field_2: str = None,
     label_field_3: str = None,
+    success_duration_seconds: int = SUCCESS_MESSAGE_DURATION_SECONDS,
 ) -> None:
     """Render a generic delete tab powered by sp_generic_delete."""
+    success_key = f"delete_success_{view}_{delete_id}"
+
     with tab:
         st.subheader(name)
         engine = get_engine()
-        df = pd.read_sql(f"SELECT * FROM {view};", engine)
+        df = read_sql_with_recovery(engine, f"SELECT * FROM {view};")
 
         if df.empty:
             st.write("No records to delete.")
+            render_success_message(success_key, success_duration_seconds)
             return
 
         if delete_id not in df.columns:
@@ -130,7 +186,10 @@ def render_delete_tab(
                         "target_id": str(selected_id),
                     },
                 )
+            queue_success_message(success_key, "Record deleted successfully.")
             st.rerun()
+
+        render_success_message(success_key, success_duration_seconds)
 
 
 def render_update_tab(
@@ -145,16 +204,18 @@ def render_update_tab(
     specs: list[dict] | None = None,
     form_key: str = "update_form",
     submit_label: str = "Update",
+    success_duration_seconds: int = SUCCESS_MESSAGE_DURATION_SECONDS,
 ) -> None:
     """Render a generic update tab powered by sp_generic_update with up to four inputs."""
     specs = specs or []
     if len(specs) > 4:
         raise ValueError("render_update_tab supports at most 4 fields (p1..p4).")
+    success_key = f"update_success_{view}_{target_id}_{form_key}"
 
     with tab:
         st.subheader(name)
         engine = get_engine()
-        df = pd.read_sql(f"SELECT * FROM {view};", engine)
+        df = read_sql_with_recovery(engine, f"SELECT * FROM {view};")
 
         if df.empty:
             st.write("No records to update.")
@@ -177,7 +238,7 @@ def render_update_tab(
         row = df.loc[selected_idx]
         selected_target_id = row[target_id]
 
-        with st.form(form_key):
+        with st.form(form_key, clear_on_submit=True):
             p = {"p1": None, "p2": None, "p3": None, "p4": None}
 
             for idx, s in enumerate(specs):
@@ -246,12 +307,20 @@ def render_update_tab(
             submitted = st.form_submit_button(submit_label)
 
         if submitted:
+            missing_fields = collect_missing_required_fields(specs, p)
+            if missing_fields:
+                st.error(f"Please fill out: {', '.join(missing_fields)}.")
+                return
+
             with engine.begin() as conn:
                 conn.execute(
                     text("CALL sp_generic_update(:update_id, :target_id, :p1, :p2, :p3, :p4);"),
                     {"update_id": update_id, "target_id": str(selected_target_id), **p},
                 )
+            queue_success_message(success_key, "Record updated successfully.")
             st.rerun()
+
+        render_success_message(success_key, success_duration_seconds)
 
 
 def render_create_tab(
@@ -261,16 +330,20 @@ def render_create_tab(
     specs: list[dict],
     form_key: str,
     submit_label: str,
+    success_duration_seconds: int = SUCCESS_MESSAGE_DURATION_SECONDS,
 ) -> None:
     """Render a generic create tab powered by sp_generic_create with up to four inputs."""
     if len(specs) > 4:
         raise ValueError("render_create_tab supports at most 4 fields (p1..p4).")
+    success_key = f"create_success_{create_id}_{form_key}"
 
     with tab:
         st.subheader(name)
         engine = get_engine()
+        form_version_key = f"{form_key}_version"
+        form_version = int(st.session_state.get(form_version_key, 0))
 
-        with st.form(form_key, clear_on_submit=True):
+        with st.form(form_key):
             p = {"p1": None, "p2": None, "p3": None, "p4": None}
 
             for idx, s in enumerate(specs):
@@ -283,6 +356,7 @@ def render_create_tab(
                         label,
                         placeholder=s.get("placeholder"),
                         help=s.get("help"),
+                        key=form_field_key(form_key, param, form_version),
                     )
                     p[param] = normalize_text(raw)
 
@@ -294,6 +368,7 @@ def render_create_tab(
                         value=s.get("default", 0),
                         step=s.get("step", 1),
                         help=s.get("help"),
+                        key=form_field_key(form_key, param, form_version),
                     )
                     p[param] = int(num)
 
@@ -305,6 +380,7 @@ def render_create_tab(
                         value=s.get("default", 0.0),
                         step=s.get("step", 0.01),
                         help=s.get("help"),
+                        key=form_field_key(form_key, param, form_version),
                     )
                     p[param] = float(num)
 
@@ -321,6 +397,7 @@ def render_create_tab(
                         index=default_index,
                         format_func=format_select_option(s),
                         help=s.get("help"),
+                        key=form_field_key(form_key, param, form_version),
                     )
                     p[param] = resolve_select_value(selected_option, s.get("value_map"))
 
@@ -330,9 +407,18 @@ def render_create_tab(
             submitted = st.form_submit_button(submit_label)
 
         if submitted:
+            missing_fields = collect_missing_required_fields(specs, p)
+            if missing_fields:
+                st.error(f"Please fill out: {', '.join(missing_fields)}.")
+                return
+
             with engine.begin() as conn:
                 conn.execute(
                     text("CALL sp_generic_create(:create_id, :p1, :p2, :p3, :p4);"),
                     {"create_id": create_id, **p},
                 )
+            st.session_state[form_version_key] = form_version + 1
+            queue_success_message(success_key, "Record created successfully.")
             st.rerun()
+
+        render_success_message(success_key, success_duration_seconds)
