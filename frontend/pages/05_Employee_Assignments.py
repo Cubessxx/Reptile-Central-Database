@@ -23,7 +23,7 @@ employee_create_options = employees_df["Employee ID"].astype(int).tolist()
 employee_update_options = [None] + employee_create_options
 
 animal_lookup = {
-    int(row["Animal ID"]): f'{int(row["Animal ID"])} - {row["Name"]} ({row["Species"]})'
+    int(row["Animal ID"]): f'Animal ID: {int(row["Animal ID"])} Animal Name: {row["Name"]}'
     for _, row in animals_df.iterrows()
 }
 
