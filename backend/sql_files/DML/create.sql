@@ -12,6 +12,31 @@ CREATE PROCEDURE sp_generic_create(
     IN p4 VARCHAR(255)
 )
 BEGIN
+    -- Friendly SQL errors for common constraint failures.
+    DECLARE EXIT HANDLER FOR 1062
+    BEGIN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'SQL ERROR: Duplicate value violates a unique constraint.';
+    END;
+
+    DECLARE EXIT HANDLER FOR 1451
+    BEGIN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'SQL ERROR: Cannot delete this item as a constraint prevents you from doing so.';
+    END;
+
+    DECLARE EXIT HANDLER FOR 1452
+    BEGIN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'SQL ERROR: Invalid reference. A related record was not found.';
+    END;
+
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'SQL ERROR: Unknown SQL Error. Please refresh the page and try again.';
+    END;
+
     CASE create_id
 
         -- Route: Customers.

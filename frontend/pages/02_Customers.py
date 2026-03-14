@@ -24,7 +24,12 @@ render_browse_tab(
 CUSTOMER_CREATE_SPECS = [
     {"label": "First Name",   "type": "text"},
     {"label": "Last Name",    "type": "text"},
-    {"label": "Email",        "type": "text"},
+    {
+        "label": "Email",
+        "type": "text",
+        "pattern": r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$",
+        "pattern_message": "Please enter a valid email address.",
+    },
     {"label": "Phone Number", "type": "text"},
 ]
 
@@ -39,7 +44,13 @@ render_create_tab(
 
 #Update Customer Tab
 CUSTOMER_UPDATE_SPECS = [
-    {"label": "Email",        "type": "text", "source": "Email"},
+    {
+        "label": "Email",
+        "type": "text",
+        "source": "Email",
+        "pattern": r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$",
+        "pattern_message": "Please enter a valid email address.",
+    },
     {"label": "Phone Number", "type": "text", "source": "Phone Number"},
 ]
 

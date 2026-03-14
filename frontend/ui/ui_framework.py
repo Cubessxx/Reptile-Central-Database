@@ -7,17 +7,18 @@
 # AI Source URL: https://chat.openai.com/
 #
 
-import time
+import re
 
 import pandas as pd
 import streamlit as st
 from backend.db import get_engine
 from frontend.ui.reset_button import render_reset_button
 from sqlalchemy import text
-from sqlalchemy.exc import PendingRollbackError
+from sqlalchemy.exc import DBAPIError, PendingRollbackError
 
 
 SUCCESS_MESSAGE_DURATION_SECONDS = 3
+UNKNOWN_SQL_ERROR_MESSAGE = "SQL ERROR: Unknown SQL Error. Please refresh the page and try again."
 
 
 # Page Setup
@@ -50,6 +51,27 @@ def collect_missing_required_fields(specs: list[dict], values: dict[str, object]
         if value is None or (isinstance(value, str) and not value.strip()):
             missing.append(spec["label"])
     return missing
+
+
+def collect_invalid_pattern_fields(specs: list[dict], values: dict[str, object]) -> list[str]:
+    """Return validation error messages for pattern-constrained text fields."""
+    errors: list[str] = []
+    for idx, spec in enumerate(specs):
+        pattern = spec.get("pattern")
+        if not pattern:
+            continue
+
+        value = values.get(f"p{idx + 1}")
+        if value is None:
+            continue
+
+        text_value = str(value).strip()
+        if not text_value:
+            continue
+
+        if re.fullmatch(pattern, text_value) is None:
+            errors.append(spec.get("pattern_message", f"Invalid value for {spec['label']}."))
+    return errors
 
 
 def form_field_key(form_key: str, param: str, version: int) -> str:
@@ -112,14 +134,29 @@ def queue_success_message(key: str, message: str) -> None:
     st.session_state[key] = message
 
 
+def sql_error_message(exc: Exception) -> str:
+    """Extract the clean SQL message returned by stored procedures."""
+    orig = getattr(exc, "orig", None)
+    if orig is not None:
+        args = getattr(orig, "args", None)
+        if args and len(args) > 1 and args[1]:
+            return str(args[1])
+        text_value = str(orig).strip()
+        if text_value:
+            return text_value
+        return UNKNOWN_SQL_ERROR_MESSAGE
+
+    text_value = str(exc).strip()
+    if text_value:
+        return text_value
+    return UNKNOWN_SQL_ERROR_MESSAGE
+
+
 def render_success_message(key: str, duration_seconds: int = SUCCESS_MESSAGE_DURATION_SECONDS) -> None:
-    """Render and clear a queued success message after a fixed duration."""
+    """Render and clear a queued success message without blocking reruns."""
     message = st.session_state.pop(key, None)
     if message:
-        placeholder = st.empty()
-        placeholder.success(message)
-        time.sleep(duration_seconds)
-        placeholder.empty()
+        st.success(message)
 
 
 # Tab Renderers
@@ -140,6 +177,7 @@ def render_delete_tab(
     label_field_1: str,
     label_field_2: str = None,
     label_field_3: str = None,
+    label_formatter=None,
     success_duration_seconds: int = SUCCESS_MESSAGE_DURATION_SECONDS,
 ) -> None:
     """Render a generic delete tab powered by sp_generic_delete."""
@@ -149,6 +187,7 @@ def render_delete_tab(
         st.subheader(name)
         engine = get_engine()
         df = read_sql_with_recovery(engine, f"SELECT * FROM {view};")
+        key_suffix = f"{view}_{delete_id}".replace(" ", "_").replace("`", "").replace(".", "_")
 
         if df.empty:
             st.write("No records to delete.")
@@ -160,32 +199,40 @@ def render_delete_tab(
 
         label_fields = [field for field in [label_field_1, label_field_2, label_field_3] if field]
         df = df.copy()
-        df["_display_label"] = build_display_labels(df, label_fields)
+        if label_formatter:
+            df["_display_label"] = df.apply(label_formatter, axis=1)
+        else:
+            df["_display_label"] = build_display_labels(df, label_fields)
         options = df.index.tolist()
 
         selected_idx = st.selectbox(
             "Select Record",
             options,
             format_func=lambda i: df.loc[i, "_display_label"],
+            key=f"delete_select_{key_suffix}",
         )
         selected_id = df.loc[selected_idx, delete_id]
 
-        if st.button("Delete"):
-            with engine.begin() as conn:
-                conn.execute(
-                    text(
-                        """
-                        CALL sp_generic_delete(
-                            :delete_id,
-                            :target_id
-                        );
-                        """
-                    ),
-                    {
-                        "delete_id": delete_id,
-                        "target_id": str(selected_id),
-                    },
-                )
+        if st.button("Delete", key=f"delete_button_{key_suffix}"):
+            try:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(
+                            """
+                            CALL sp_generic_delete(
+                                :delete_id,
+                                :target_id
+                            );
+                            """
+                        ),
+                        {
+                            "delete_id": delete_id,
+                            "target_id": str(selected_id),
+                        },
+                    )
+            except DBAPIError as exc:
+                st.error(sql_error_message(exc))
+                return
             queue_success_message(success_key, "Record deleted successfully.")
             st.rerun()
 
@@ -201,6 +248,7 @@ def render_update_tab(
     label_field_1: str,
     label_field_2: str = None,
     label_field_3: str = None,
+    label_formatter=None,
     specs: list[dict] | None = None,
     form_key: str = "update_form",
     submit_label: str = "Update",
@@ -226,7 +274,10 @@ def render_update_tab(
 
         label_fields = [field for field in [label_field_1, label_field_2, label_field_3] if field]
         df = df.copy()
-        df["_display_label"] = build_display_labels(df, label_fields)
+        if label_formatter:
+            df["_display_label"] = df.apply(label_formatter, axis=1)
+        else:
+            df["_display_label"] = build_display_labels(df, label_fields)
         options = df.index.tolist()
 
         selected_idx = st.selectbox(
@@ -311,12 +362,20 @@ def render_update_tab(
             if missing_fields:
                 st.error(f"Please fill out: {', '.join(missing_fields)}.")
                 return
+            pattern_errors = collect_invalid_pattern_fields(specs, p)
+            if pattern_errors:
+                st.error(pattern_errors[0])
+                return
 
-            with engine.begin() as conn:
-                conn.execute(
-                    text("CALL sp_generic_update(:update_id, :target_id, :p1, :p2, :p3, :p4);"),
-                    {"update_id": update_id, "target_id": str(selected_target_id), **p},
-                )
+            try:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text("CALL sp_generic_update(:update_id, :target_id, :p1, :p2, :p3, :p4);"),
+                        {"update_id": update_id, "target_id": str(selected_target_id), **p},
+                    )
+            except DBAPIError as exc:
+                st.error(sql_error_message(exc))
+                return
             queue_success_message(success_key, "Record updated successfully.")
             st.rerun()
 
@@ -411,12 +470,20 @@ def render_create_tab(
             if missing_fields:
                 st.error(f"Please fill out: {', '.join(missing_fields)}.")
                 return
+            pattern_errors = collect_invalid_pattern_fields(specs, p)
+            if pattern_errors:
+                st.error(pattern_errors[0])
+                return
 
-            with engine.begin() as conn:
-                conn.execute(
-                    text("CALL sp_generic_create(:create_id, :p1, :p2, :p3, :p4);"),
-                    {"create_id": create_id, **p},
-                )
+            try:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text("CALL sp_generic_create(:create_id, :p1, :p2, :p3, :p4);"),
+                        {"create_id": create_id, **p},
+                    )
+            except DBAPIError as exc:
+                st.error(sql_error_message(exc))
+                return
             st.session_state[form_version_key] = form_version + 1
             queue_success_message(success_key, "Record created successfully.")
             st.rerun()

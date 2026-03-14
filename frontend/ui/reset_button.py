@@ -10,8 +10,15 @@ RESET_DB_SUCCESS_KEY = "reset_db_success"
 RESET_DB_SUCCESS_SEQUENCE_KEY = "reset_db_success_sequence"
 
 
-def render_center_success_overlay(message: str, sequence: int) -> None:
-    """Render a center-screen success popup that fades out after 3 seconds."""
+def render_center_success_overlay(message: str | None, sequence: int = 0) -> None:
+    """Render a stable overlay slot; show a bottom-right success popup when a message exists."""
+    if not message:
+        st.markdown(
+            '<div class="reset-success-overlay-slot" style="display:none;"></div>',
+            unsafe_allow_html=True,
+        )
+        return
+
     animation_name = f"resetSuccessFadeOut_{sequence}"
     overlay_class = f"reset-success-overlay-{sequence}"
     st.markdown(
@@ -20,22 +27,22 @@ def render_center_success_overlay(message: str, sequence: int) -> None:
 @keyframes {animation_name} {{
     0%, 85% {{
         opacity: 1;
-        transform: translate(-50%, -50%) scale(1);
+        transform: translate(0, 0) scale(1);
     }}
     100% {{
         opacity: 0;
-        transform: translate(-50%, -50%) scale(0.98);
+        transform: translate(0, 0) scale(0.98);
     }}
 }}
 .{overlay_class} {{
     position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
+    bottom: 1.25rem;
+    right: 1.25rem;
+    transform: translate(0, 0);
     z-index: 99999;
     padding: 0.95rem 1.25rem;
     border-radius: 0.75rem;
-    background: #dc2626;
+    background: #16a34a;
     color: #ffffff;
     font-weight: 600;
     box-shadow: 0 14px 30px rgba(0, 0, 0, 0.28);
@@ -53,6 +60,8 @@ def render_center_success_overlay(message: str, sequence: int) -> None:
 def render_reset_button(key: str) -> None:
     engine = get_engine()
 
+    message = None
+    sequence = 0
     success_payload = st.session_state.pop(RESET_DB_SUCCESS_KEY, None)
     if success_payload:
         if isinstance(success_payload, dict):
@@ -60,8 +69,7 @@ def render_reset_button(key: str) -> None:
             sequence = int(success_payload.get("sequence", 0))
         else:
             message = str(success_payload)
-            sequence = 0
-        render_center_success_overlay(message, sequence)
+    render_center_success_overlay(message, sequence)
 
     # Hacky fix to make the button red.
     st.sidebar.markdown(

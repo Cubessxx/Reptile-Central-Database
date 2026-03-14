@@ -9,6 +9,15 @@ from frontend.ui.ui_framework import (
 
 page_setup(title="Animals", icon="🐍", page_heading="Animals")
 
+
+def format_animal_record_label(row) -> str:
+    return (
+        f"Animal ID: {int(row['Animal ID'])} "
+        f"Name: {row['Name']} "
+        f"Species: {row['Species']}"
+    )
+
+
 tab_browse, tab_create, tab_update, tab_delete = st.tabs(
     ["Browse Animals", "Create Animal", "Update Animal", "Delete Animal"]
 )
@@ -50,7 +59,10 @@ render_update_tab(
     view="v_browse_animals_page",
     update_id="Animal",
     target_id="Animal ID",
-    label_field_1="Name",
+    label_field_1="Animal ID",
+    label_field_2="Name",
+    label_field_3="Species",
+    label_formatter=format_animal_record_label,
     specs=ANIMAL_UPDATE_SPECS,
     form_key="update_animal_form",
     submit_label="Update Animal",
@@ -62,5 +74,8 @@ render_delete_tab(
     name="Delete Animal",
     view="v_browse_animals_page",
     delete_id="Animal ID",
-    label_field_1="Name",
+    label_field_1="Animal ID",
+    label_field_2="Name",
+    label_field_3="Species",
+    label_formatter=format_animal_record_label,
 )

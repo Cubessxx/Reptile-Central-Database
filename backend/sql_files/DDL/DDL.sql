@@ -5,6 +5,8 @@ Members: Gage Cox
          Carlos Chirinos
 */
 
+USE `sql3817488`;
+
 START TRANSACTION;
 
 SET FOREIGN_KEY_CHECKS = 0;

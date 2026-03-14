@@ -1,5 +1,3 @@
-import time
-
 import pandas as pd
 import streamlit as st
 from sqlalchemy import text
@@ -92,7 +90,7 @@ def render_create_order_tab(tab, engine, customers_df, employees_df, products_df
     """Show the Create Order tab."""
     with tab:
         st.subheader("Create Order")
-        st.write("Create a new order in the system with a selected customer and assigned employee.")
+        st.write("Create a new order in the system with a selected customer and assigned employee. To add items, double click on the desired products quantity field and enter the desired amount.")
 
         customer_options = id_label_map(customers_df, "Customer ID", "Customer Name")
         employee_options = id_label_map(employees_df, "Employee ID", "Employee Name")
@@ -116,7 +114,6 @@ def render_create_order_tab(tab, engine, customers_df, employees_df, products_df
                 format_func=employee_options.get,
                 key="create_order_employee",
             )
-            st.caption("Set quantities for products included in the order.")
             edited_df = st.data_editor(
                 entry_df,
                 width="stretch",
@@ -132,10 +129,7 @@ def render_create_order_tab(tab, engine, customers_df, employees_df, products_df
         if submitted:
             items = edited_df.query("Quantity > 0")[["Product ID", "Quantity"]].astype(int)
             if items.empty:
-                message_placeholder = st.empty()
-                message_placeholder.error("A order must contain atleast one item.")
-                time.sleep(3)
-                message_placeholder.empty()
+                st.error("Submission Failed. A order must contain atleast one item.")
                 return
 
             with engine.begin() as conn:
@@ -152,26 +146,35 @@ def render_create_order_tab(tab, engine, customers_df, employees_df, products_df
 def render_details_tab(tab, engine, orders_df, products_df) -> None:
     """Show the order details tab for viewing and editing items."""
     with tab:
-        render_success_message(
-            UPDATE_ORDER_ITEM_SUCCESS_KEY,
-            ORDER_SUCCESS_MESSAGE_DURATION_SECONDS,
-        )
         if orders_df.empty:
             st.write("No orders found.")
             return
 
-        st.write("Select an order to view or edit.")
+        st.subheader("View Order Details")
         order_options = {
             int(order_id): f"Order ID: {int(order_id)} Name: {customer_name}"
             for order_id, customer_name in orders_df[["Order ID", "Customer Name"]].itertuples(
                 index=False, name=None
             )
         }
+        order_option_ids = list(order_options)
+        order_select_key = "update_order_select"
+        selected_order_id = st.session_state.get(order_select_key)
+        try:
+            selected_order_id = int(selected_order_id) if selected_order_id is not None else None
+        except (TypeError, ValueError):
+            selected_order_id = None
+
+        if selected_order_id not in order_option_ids:
+            st.session_state[order_select_key] = order_option_ids[0]
+        else:
+            st.session_state[order_select_key] = selected_order_id
+
         order_id = st.selectbox(
             "Order",
-            list(order_options),
+            order_option_ids,
             format_func=order_options.get,
-            key="update_order_select",
+            key=order_select_key,
         )
 
         details_df = pd.read_sql(ORDER_DETAILS_QUERY, engine, params={"order_id": int(order_id)})
@@ -182,28 +185,35 @@ def render_details_tab(tab, engine, orders_df, products_df) -> None:
 
         st.divider()
         st.subheader("Update or Add Items")
-        st.write("Select an item to add or update in the order.")
+        st.write("Select an item to add or update in the order selected above.")
 
-        product_options = id_label_map(products_df, "Product ID", "Product Name")
-        product_id = st.selectbox(
-            "Select Item",
-            list(product_options),
-            format_func=product_options.get,
-            key="update_or_add_item_select",
-        )
-        qty = st.number_input(
-            "Quantity",
-            min_value=1,
-            step=1,
-            value=1,
-            key="update_or_add_item_qty",
-        )
+        with st.form("update_or_add_item_form"):
+            product_options = id_label_map(products_df, "Product ID", "Product Name")
+            product_id = st.selectbox(
+                "Select Item",
+                list(product_options),
+                format_func=product_options.get,
+                key="update_or_add_item_select",
+            )
+            qty = st.number_input(
+                "Quantity",
+                min_value=1,
+                step=1,
+                value=1,
+                key="update_or_add_item_qty",
+            )
+            submitted = st.form_submit_button("Update or Add Item")
 
-        if st.button("Update or Add Item"):
+        if submitted:
             with engine.begin() as conn:
                 upsert_order_item(conn, int(order_id), int(product_id), int(qty))
-            queue_success_message(UPDATE_ORDER_ITEM_SUCCESS_KEY, "Order item updated successfully.")
+            queue_success_message(UPDATE_ORDER_ITEM_SUCCESS_KEY, "Order updated successfully.")
             st.rerun()
+
+        render_success_message(
+            UPDATE_ORDER_ITEM_SUCCESS_KEY,
+            ORDER_SUCCESS_MESSAGE_DURATION_SECONDS,
+        )
 
 
 page_setup(title="Orders", icon="📄", page_heading="Orders")
