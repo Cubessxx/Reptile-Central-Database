@@ -4,6 +4,7 @@ import streamlit as st
 from backend.db import get_engine
 from frontend.ui.ui_framework import (
     page_setup,
+    read_sql_with_recovery,
     render_browse_tab,
     render_create_tab,
     render_update_tab,
@@ -14,8 +15,8 @@ from frontend.ui.ui_framework import (
 page_setup(title="Employee Assignments", icon="🔗", page_heading="Employee Assignments")
 engine = get_engine()
 
-animals_df = pd.read_sql("SELECT * FROM v_browse_animals_page;", engine)
-employees_df = pd.read_sql("SELECT * FROM v_browse_employees_page;", engine)
+animals_df = read_sql_with_recovery(engine, "SELECT * FROM v_browse_animals_page;")
+employees_df = read_sql_with_recovery(engine, "SELECT * FROM v_browse_employees_page;")
 
 animal_options = animals_df["Animal ID"].astype(int).tolist()
 employee_create_options = employees_df["Employee ID"].astype(int).tolist()

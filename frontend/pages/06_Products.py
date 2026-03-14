@@ -1,9 +1,9 @@
-import pandas as pd
 import streamlit as st
 
 from backend.db import get_engine
 from frontend.ui.ui_framework import (
     page_setup,
+    read_sql_with_recovery,
     render_browse_tab,
     render_create_tab,
     render_update_tab,
@@ -25,7 +25,7 @@ render_browse_tab(
     view="v_browse_products_page",
 )
 
-product_types_df = pd.read_sql("SELECT * FROM v_browse_product_types_page;", engine)
+product_types_df = read_sql_with_recovery(engine, "SELECT * FROM v_browse_product_types_page;")
 type_code_options = product_types_df["Product Type Code"].astype(str).tolist()
 type_name_lookup = dict(
     zip(

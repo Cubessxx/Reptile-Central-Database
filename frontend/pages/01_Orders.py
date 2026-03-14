@@ -6,6 +6,7 @@ from backend.db import get_engine
 from frontend.ui.ui_framework import (
     page_setup,
     queue_success_message,
+    read_sql_with_recovery,
     render_browse_tab,
     render_delete_tab,
     render_success_message,
@@ -44,10 +45,10 @@ def id_label_map(df: pd.DataFrame, id_col: str, label_col: str) -> dict[int, str
 
 def load_page_data(engine):
     """Load the data used by the Orders page."""
-    orders_df = pd.read_sql("SELECT * FROM v_browse_orders_page;", engine)
-    customers_df = pd.read_sql("SELECT * FROM v_browse_customers_page;", engine)
-    employees_df = pd.read_sql("SELECT * FROM v_browse_employees_page;", engine)
-    products_df = pd.read_sql("SELECT * FROM v_browse_products_page;", engine)
+    orders_df = read_sql_with_recovery(engine, "SELECT * FROM v_browse_orders_page;")
+    customers_df = read_sql_with_recovery(engine, "SELECT * FROM v_browse_customers_page;")
+    employees_df = read_sql_with_recovery(engine, "SELECT * FROM v_browse_employees_page;")
+    products_df = read_sql_with_recovery(engine, "SELECT * FROM v_browse_products_page;")
 
     customers_df["Customer Name"] = full_name(customers_df, "First Name", "Last Name")
     employees_df["Employee Name"] = full_name(employees_df, "First Name", "Last Name")
@@ -177,7 +178,11 @@ def render_details_tab(tab, engine, orders_df, products_df) -> None:
             key=order_select_key,
         )
 
-        details_df = pd.read_sql(ORDER_DETAILS_QUERY, engine, params={"order_id": int(order_id)})
+        details_df = read_sql_with_recovery(
+            engine,
+            ORDER_DETAILS_QUERY,
+            params={"order_id": int(order_id)},
+        )
         if details_df.empty:
             st.write("No line items for this order.")
         else:
